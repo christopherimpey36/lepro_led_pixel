@@ -116,7 +116,7 @@ class MQTTClientWrapper:
             except asyncio.CancelledError:
                 pass
 
-async def async_login(session, account, password, mac, login_url, api_host, language="en", fcm_token=""):
+async def async_login(session, account, password, mac, login_url, api_host, language="en"):
     timestamp = str(int(time.time()))
     payload = {
         "platform": "2",
@@ -125,7 +125,8 @@ async def async_login(session, account, password, mac, login_url, api_host, lang
         "mac": mac,
         "timestamp": timestamp,
         "language": language,
-        "fcmToken": fcm_token,
+        # THIS was missing. Without it, Lepro silently returns 0 devices.
+        "fcmToken": "dfi8s76mRTCxRxm3UtNp2z:APA91bHWMEWKT9CgNfGJ961jot2qgfYdWePbO5sQLovSFDI7U_H-ulJiqIAB2dpZUUrhzUNWR3OE_eM83i9IDLk1a5ZRwHDxMA_TnGqdpE8H-0_JML8pBFA",
     }
     headers = {
         "Content-Type": "application/json",
