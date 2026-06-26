@@ -10,7 +10,7 @@ This reproduces the exact flow proven by the standalone sniffer:
   6. publish writes to le/<did>/prp/set, reads via le/<did>/prp/get
 
 No Home Assistant entity logic here; this is pure connection/transport. The
-coordinator owns an instance and wires the message callback.
+integration setup (__init__.py) owns an instance and wires the callback.
 """
 
 from __future__ import annotations
@@ -83,7 +83,9 @@ class LeproApi:
         self._loop_task: asyncio.Task | None = None
         self._message_cb: MessageCallback | None = None
         self._subscriptions: set[str] = set()
+        self._pending_messages: list[tuple[str, str]] = []
         self._stop = asyncio.Event()
+        self._connected = asyncio.Event()
 
     # --- public API -----------------------------------------------------------
 
@@ -119,12 +121,18 @@ class LeproApi:
             return dev.get("data", {}).get("list", [])
 
     async def async_connect(self) -> None:
-        """Build SSL context and start the MQTT loop task."""
-        self._ssl_context = await asyncio.get_event_loop().run_in_executor(
+        """Build SSL context, start the MQTT loop, and wait until connected."""
+        self._ssl_context = await asyncio.get_running_loop().run_in_executor(
             None, self._build_ssl_context
         )
         self._stop.clear()
+        self._connected.clear()
         self._loop_task = asyncio.create_task(self._run())
+        # wait for the first successful connection so callers can publish safely
+        try:
+            await asyncio.wait_for(self._connected.wait(), timeout=15)
+        except asyncio.TimeoutError:
+            _LOGGER.warning("MQTT did not connect within 15s; continuing anyway")
 
     async def async_subscribe_device(self, did: str) -> None:
         topic = TOPIC_SUB.format(did=did)
@@ -219,6 +227,13 @@ class LeproApi:
             if r.status != 200:
                 raise LeproAuthError(f"cert download {url} -> HTTP {r.status}")
             data = await r.read()
+        # file write is blocking; run it off the event loop
+        await asyncio.get_running_loop().run_in_executor(
+            None, self._write_file, dest, data
+        )
+
+    @staticmethod
+    def _write_file(dest: str, data: bytes) -> None:
         with open(dest, "wb") as f:
             f.write(data)
 
@@ -237,7 +252,9 @@ class LeproApi:
 
     async def _raw_publish(self, topic: str, payload: str) -> None:
         if self._client is None:
-            _LOGGER.warning("publish before MQTT ready, dropping: %s", topic)
+            # not connected yet: queue and flush once connected (mirrors the
+            # original integration's MQTTClientWrapper behaviour)
+            self._pending_messages.append((topic, payload))
             return
         try:
             await self._client.publish(topic, payload)
@@ -256,9 +273,19 @@ class LeproApi:
                     tls_context=self._ssl_context,
                 ) as client:
                     self._client = client
+                    self._connected.set()
                     backoff = 1
                     for topic in self._subscriptions:
                         await client.subscribe(topic)
+                    # flush any messages queued before the connection was ready
+                    if self._pending_messages:
+                        pending = self._pending_messages
+                        self._pending_messages = []
+                        for topic, payload in pending:
+                            try:
+                                await client.publish(topic, payload)
+                            except MqttError as e:
+                                _LOGGER.error("MQTT flush publish failed (%s): %s", topic, e)
                     async for message in client.messages:
                         await self._handle(message)
             except MqttError as e:
@@ -269,6 +296,7 @@ class LeproApi:
                 _LOGGER.exception("Unexpected MQTT loop error: %s", e)
             finally:
                 self._client = None
+                self._connected.clear()
             if self._stop.is_set():
                 break
             await asyncio.sleep(backoff)
