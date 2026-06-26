@@ -1,43 +1,43 @@
-"""The Lepro Pixel LED integration.
-
-One integration, multiple entity platforms (light, number, switch). The
-integration setup owns the API connection, fetches the device list, and stores
-the connection + raw device list in hass.data. The light platform creates the
-entities (which hold per-device state and do the encode/publish work). number
-and switch platforms reference those light entities, matching the established
-Lepro integration structure. No coordinator.
-"""
+"""The Lepro Pixel LED integration."""
 
 from __future__ import annotations
 
+import json
 import logging
-
+import random
+import time
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ConfigEntryNotReady
 import homeassistant.helpers.config_validation as cv
 
-from .api import LeproApi, LeproAuthError
 from .const import (
-    CONF_PIXEL_COUNT,
-    CONF_REGION,
     DOMAIN,
-    SERVICE_SEND_DEBUG,
+    THEMES,
     SERVICE_SET_PIXELS,
+    SERVICE_SET_THEME,
+    SERVICE_SEND_DEBUG,
+    SERVICE_REQUEST_DEBUG,
 )
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["light", "number", "switch"]
 
-CONF_ACCOUNT = "account"
-CONF_PASSWORD = "password"
-
+# --- Validation Schemas -------------------------------------------------------
 SET_PIXELS_SCHEMA = vol.Schema(
     {
         vol.Required("device_id"): cv.string,
         vol.Required("colors"): [vol.All([vol.Coerce(int)], vol.Length(min=3, max=3))],
+        vol.Optional("brightness"): vol.All(int, vol.Range(min=0, max=255)),
+    }
+)
+
+SET_THEME_SCHEMA = vol.Schema(
+    {
+        vol.Required("device_id"): cv.string,
+        vol.Optional("theme_name"): vol.In(list(THEMES.keys())),
+        vol.Optional("custom_colors"): [vol.All([vol.Coerce(int)], vol.Length(min=3, max=3))],
         vol.Optional("brightness"): vol.All(int, vol.Range(min=0, max=255)),
     }
 )
@@ -49,61 +49,21 @@ SEND_DEBUG_SCHEMA = vol.Schema(
     }
 )
 
+REQUEST_DEBUG_SCHEMA = vol.Schema(
+    {
+        vol.Required("device_id"): cv.string,
+        vol.Optional(
+            "keys",
+            default=["d1", "d2", "d3", "d4", "d5", "d30", "d50", "d52", "d60", "online"],
+        ): [cv.string],
+    }
+)
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Lepro Pixel LED from a config entry."""
-    hass.data.setdefault(DOMAIN, {})
-
-    api = LeproApi(
-        hass_config_dir=hass.config.config_dir,
-        entry_id=entry.entry_id,
-        account=entry.data[CONF_ACCOUNT],
-        password=entry.data[CONF_PASSWORD],
-        region=entry.data.get(CONF_REGION, "eu"),
-    )
-
-    try:
-        raw_devices = await api.async_setup()
-    except LeproAuthError as e:
-        raise ConfigEntryNotReady(f"Lepro auth failed: {e}") from e
-    except Exception as e:  # noqa: BLE001
-        raise ConfigEntryNotReady(f"Lepro setup failed: {e}") from e
-
-    try:
-        await api.async_connect()
-    except Exception as e:  # noqa: BLE001
-        raise ConfigEntryNotReady(f"Lepro MQTT connect failed: {e}") from e
-
-    # Shared store: the light platform fills 'lights' with its entities so the
-    # Build the main light entities up front so every platform sees a fully
-    # populated 'lights' dict regardless of platform setup order (no retry loop).
-    from .light import LeproLight  # local import to avoid circulars at module load
-
-    overrides = entry.options.get(CONF_PIXEL_COUNT, {})
-    lights: dict = {}
-    for raw in raw_devices:
-        did = str(raw["did"])
-        lights[did] = LeproLight(api, raw, pixel_override=overrides.get(did))
-
-    store = {
-        "api": api,
-        "raw_devices": raw_devices,
-        "overrides": overrides,
-        "lights": lights,   # did -> main LeproLight entity (pre-built)
-    }
-    hass.data[DOMAIN][entry.entry_id] = store
-
-    # Route inbound MQTT reports to the matching light entity.
-    async def _on_message(did: str, data: dict) -> None:
-        light = store["lights"].get(did)
-        if light is not None:
-            light.handle_report(data)
-
-    api.set_message_callback(_on_message)
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _register_services(hass)
-    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
@@ -111,51 +71,102 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        data = hass.data[DOMAIN].pop(entry.entry_id)
-        await data["api"].async_disconnect()
-        if not hass.data[DOMAIN]:
-            for svc in (SERVICE_SET_PIXELS, SERVICE_SEND_DEBUG):
+        if DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]:
+            hass.data[DOMAIN].pop(entry.entry_id)
+        
+        # Clean up global service definitions if no entries remain
+        if not hass.data.get(DOMAIN):
+            for svc in (SERVICE_SET_PIXELS, SERVICE_SET_THEME, SERVICE_SEND_DEBUG, SERVICE_REQUEST_DEBUG):
                 if hass.services.has_service(DOMAIN, svc):
                     hass.services.async_remove(DOMAIN, svc)
     return unloaded
 
 
-async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    await hass.config_entries.async_reload(entry.entry_id)
-
-
 def _register_services(hass: HomeAssistant) -> None:
-    def _find_light(device_id: str):
-        for data in hass.data.get(DOMAIN, {}).values():
-            light = data["lights"].get(device_id)
-            if light is not None:
-                return light
+    """Register regional service hooks for dashboard actions and AI agents."""
+
+    def _find_light_entity(device_id: str):
+        """Scan across mapped entries to locate the primary light object context-safely."""
+        for entry_id in hass.data.get(DOMAIN, {}):
+            device_map = hass.data[DOMAIN][entry_id].get("device_map", {})
+            if device_id in device_map:
+                return device_map[device_id]
         return None
 
     async def _set_pixels(call: ServiceCall) -> None:
+        """Paint individual string pixels granularly via service call arrays."""
         did = str(call.data["device_id"])
         colors = [tuple(int(c) for c in rgb) for rgb in call.data["colors"]]
         brightness = call.data.get("brightness")
-        light = _find_light(did)
+        
+        light = _find_light_entity(did)
         if light is None:
-            _LOGGER.error("set_pixels: unknown device_id %s", did)
+            _LOGGER.error("set_pixels: Device %s not found on active registry tracks", did)
             return
         await light.async_apply_pixels(colors, brightness)
 
+    async def _set_theme(call: ServiceCall) -> None:
+        """Trigger an algorithmic theme palette or custom on-the-fly voice array."""
+        did = str(call.data["device_id"])
+        theme_name = call.data.get("theme_name")
+        custom_colors = call.data.get("custom_colors")
+        brightness = call.data.get("brightness")
+
+        light = _find_light_entity(did)
+        if light is None:
+            _LOGGER.error("set_theme: Device %s not found on active registry tracks", did)
+            return
+
+        # Handle on-the-fly generation from voice intents/custom color loops
+        if custom_colors:
+            colors = [tuple(int(c) for c in rgb) for rgb in custom_colors]
+            # Cycle colors evenly across string length
+            pixel_array = [colors[i % len(colors)] for i in range(light.pixel_count)]
+            await light.async_apply_pixels(pixel_array, brightness)
+        elif theme_name:
+            await light.async_apply_theme(theme_name, brightness)
+
     async def _send_debug(call: ServiceCall) -> None:
+        """Community tool: inject raw payloads directly into device execution tracks."""
         did = str(call.data["device_id"])
         payload = call.data["payload"]
-        for data in hass.data.get(DOMAIN, {}).values():
-            if did in data["lights"]:
-                await data["api"].async_publish(did, payload)
+        
+        for entry_id in hass.data.get(DOMAIN, {}):
+            store = hass.data[DOMAIN][entry_id]
+            if did in store.get("device_map", {}):
+                topic = f"le/{did}/prp/set"
+                envelope = {
+                    "id": random.randint(0, 1000000000),
+                    "t": int(time.time()),
+                    "d": payload,
+                }
+                await store["mqtt_client"].publish(topic, json.dumps(envelope))
                 return
-        _LOGGER.error("send_debug_command: unknown device_id %s", did)
+        _LOGGER.error("send_debug_command: Unknown device_id %s", did)
 
+    async def _request_debug(call: ServiceCall) -> None:
+        """Community tool: poll unverified fields from tracking lines directly via get topic."""
+        did = str(call.data["device_id"])
+        keys = call.data["keys"]
+        
+        for entry_id in hass.data.get(DOMAIN, {}):
+            store = hass.data[DOMAIN][entry_id]
+            if did in store.get("device_map", {}):
+                topic = f"le/{did}/prp/get"
+                payload = json.dumps({"d": keys})
+                await store["mqtt_client"].publish(topic, payload)
+                return
+        _LOGGER.error("request_debug_state: Unknown device_id %s", did)
+
+    # Core Action API registration hooks
     if not hass.services.has_service(DOMAIN, SERVICE_SET_PIXELS):
-        hass.services.async_register(
-            DOMAIN, SERVICE_SET_PIXELS, _set_pixels, schema=SET_PIXELS_SCHEMA
-        )
+        hass.services.async_register(DOMAIN, SERVICE_SET_PIXELS, _set_pixels, schema=SET_PIXELS_SCHEMA)
+        
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_THEME):
+        hass.services.async_register(DOMAIN, SERVICE_SET_THEME, _set_theme, schema=SET_THEME_SCHEMA)
+
     if not hass.services.has_service(DOMAIN, SERVICE_SEND_DEBUG):
-        hass.services.async_register(
-            DOMAIN, SERVICE_SEND_DEBUG, _send_debug, schema=SEND_DEBUG_SCHEMA
-        )
+        hass.services.async_register(DOMAIN, SERVICE_SEND_DEBUG, _send_debug, schema=SEND_DEBUG_SCHEMA)
+        
+    if not hass.services.has_service(DOMAIN, SERVICE_REQUEST_DEBUG):
+        hass.services.async_register(DOMAIN, SERVICE_REQUEST_DEBUG, _request_debug, schema=REQUEST_DEBUG_SCHEMA)

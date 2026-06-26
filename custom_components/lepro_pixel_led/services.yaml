@@ -1,28 +1,26 @@
 set_pixels:
   name: Set pixels
   description: >
-    Set every pixel of an addressable Lepro string (ZB1/E1/N1) in a single
-    write. Provide one [r, g, b] colour per pixel, in order.
+    Set every individual pixel of an addressable Lepro string (ZB1/E1/N1/S1) in a single
+    write window. Provide one [r, g, b] color array per bulb in order.
   fields:
     device_id:
       name: Device ID
-      description: The Lepro device id (did) of the pixel string.
+      description: The Lepro unique hardware device ID (did) of the string.
       required: true
-      example: "1748632475"
+      example: "1234567890"
       selector:
         text:
     colors:
-      name: Colours
-      description: >
-        A list of [r, g, b] triples, one per pixel. Extra pixels keep their last
-        value; fewer than the string length leaves the remainder unchanged.
+      name: Colors
+      description: A list of [r, g, b] triples, mapped bulb-by-bulb.
       required: true
       example: "[[255,0,0],[0,255,0],[0,0,255]]"
       selector:
         object:
     brightness:
       name: Brightness
-      description: Optional master brightness 0-255.
+      description: Optional string-wide master brightness slider scaling (0-255).
       required: false
       example: 200
       selector:
@@ -30,23 +28,105 @@ set_pixels:
           min: 0
           max: 255
 
-send_debug_command:
-  name: Send debug command
+set_theme:
+  name: Set custom theme
   description: >
-    Publish a raw payload to a device's prp/set topic. For protocol
-    investigation on unverified models. Advanced use only.
+    Trigger a built-in cinematic/holiday algorithmic theme palette or push custom color 
+    loops dynamically from a voice intent or automation rule.
   fields:
     device_id:
       name: Device ID
-      description: The Lepro device id (did).
+      description: The Lepro unique hardware device ID (did).
       required: true
-      example: "1748632475"
+      example: "1234567890"
+      selector:
+        text:
+    theme_name:
+      name: Theme Name
+      description: Name of a hardcoded pre-baked palette configuration.
+      required: false
+      example: "cyberpunk"
+      selector:
+        select:
+          options:
+            - cyberpunk
+            - incredible_hulk
+            - superman
+            - batman
+            - spiderman
+            - iron_man
+            - captain_america
+            - captain_brain
+            - wonderwoman
+            - avengers
+            - justice_league
+            - star_wars
+            - star_trek_enterprise_bridge
+            - klingon_bird_of_prey
+            - romulan_war_bird
+            - christmas
+            - halloween
+            - ramadan
+            - easter
+            - diwali
+            - hanuka
+            - hawaiian_beach_party
+            - ibiza_beach_party
+            - country_estate
+            - nightclub_party
+    custom_colors:
+      name: Custom Colors
+      description: Optional array of custom colors. Ideal for AI tool calling execution tracks to build arrays on-the-fly.
+      required: false
+      example: "[[128,0,128],[50,205,50]]"
+      selector:
+        object:
+    brightness:
+      name: Brightness
+      description: Master brightness scaling limits (0-255).
+      required: false
+      example: 255
+      selector:
+        number:
+          min: 0
+          max: 255
+
+send_debug_command:
+  name: Send debug command (Community Tool)
+  description: >
+    Inject a raw dictionary directly into the device's setup/write target topic. 
+    Used to explore unverified protocol dialects without physical sniffing gear.
+  fields:
+    device_id:
+      name: Device ID
+      description: The Lepro unique hardware device ID (did).
+      required: true
+      example: "1234567890"
       selector:
         text:
     payload:
       name: Payload
-      description: The dict placed in the MQTT message's "d" field.
+      description: The raw JSON object injected directly inside the payload data frame wrapper.
       required: true
       example: '{"d1": 1, "d2": 1, "d5": "000003E803E8"}'
+      selector:
+        object:
+
+request_debug_state:
+  name: Request debug state (Community Tool)
+  description: Request raw status tracking strings from target device via the MQTT get query line.
+  fields:
+    device_id:
+      name: Device ID
+      description: The Lepro unique hardware device ID (did).
+      required: true
+      example: "1234567890"
+      selector:
+        text:
+    keys:
+      name: Target Data Keys
+      description: List of state register keys to poll from the internal hardware engine.
+      required: false
+      example: '["d1", "d50", "d60"]'
       selector:
         object:

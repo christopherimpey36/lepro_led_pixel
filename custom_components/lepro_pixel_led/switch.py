@@ -1,6 +1,8 @@
-"""Switch platform: master power for all devices, referencing the light."""
+"""Switch platform for Lepro LED master power overrides."""
 
 from __future__ import annotations
+
+import logging
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
@@ -9,27 +11,38 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 
+_LOGGER = logging.getLogger(__name__)
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    lights = hass.data[DOMAIN][entry.entry_id]["lights"]
-    async_add_entities(LeproPowerSwitch(light) for light in lights.values())
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+    """Set up power-only switch entities for Lepro devices."""
+    data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if not data or "entities" not in data:
+        return
+
+    lights = data.get("entities", [])
+    switches = []
+    
+    for light in lights:
+        # Attach only to the parent controller
+        if hasattr(light, "_did") and hasattr(light, "state_store"):
+            switches.append(LeproPowerSwitch(light))
+
+    if switches:
+        async_add_entities(switches)
 
 
 class LeproPowerSwitch(SwitchEntity):
-    _attr_has_entity_name = True
-    _attr_translation_key = "power"
+    """Master Power bypass switch for a Lepro device."""
 
-    def __init__(self, light) -> None:
-        self.parent = light
-        self._attr_unique_id = f"{light.did}_power"
-        self._attr_device_info = {"identifiers": {(DOMAIN, light.did)}}
+    def __init__(self, light):
+        self._light = light
+        self._attr_has_entity_name = True
+        self._attr_translation_key = "power"
+        self._attr_unique_id = f"{light._did}_power"
+        self._attr_device_info = light._attr_device_info
 
     async def async_added_to_hass(self) -> None:
-        self.parent.register_pixel(self._handle_update)
+        self._light.register_pixel(self._handle_update)
 
     @callback
     def _handle_update(self) -> None:
@@ -37,10 +50,12 @@ class LeproPowerSwitch(SwitchEntity):
 
     @property
     def is_on(self) -> bool | None:
-        return self.parent.state.is_on
+        return bool(self._light.state_store.is_on)
 
     async def async_turn_on(self, **kwargs) -> None:
-        await self.parent.async_apply_power(True)
+        # Use the underlying light's async turn on to ensure state sync
+        await self._light.async_turn_on()
 
     async def async_turn_off(self, **kwargs) -> None:
-        await self.parent.async_apply_power(False)
+        # Use the underlying light's async turn off to ensure state sync
+        await self._light.async_turn_off()

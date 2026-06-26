@@ -3,96 +3,83 @@
 from __future__ import annotations
 
 from typing import Any
-
 import voluptuous as vol
 
-from homeassistant.config_entries import (
-    ConfigEntry,
-    ConfigFlow,
-    ConfigFlowResult,
-    OptionsFlow,
-)
+from homeassistant import config_entries
 from homeassistant.core import callback
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import selector
 
-from .api import LeproApi, LeproAuthError
-from .const import CONF_PIXEL_COUNT, CONF_REGION, DOMAIN, REGIONS
+from .const import CONF_PIXEL_COUNT, DOMAIN
 
-CONF_ACCOUNT = "account"
-CONF_PASSWORD = "password"
+REGION_OPTIONS = [
+    selector.SelectOptionDict(value="eu", label="Europe"),
+    selector.SelectOptionDict(value="us", label="United States"),
+    selector.SelectOptionDict(value="na", label="North America"),
+    selector.SelectOptionDict(value="fe", label="Far East"),
+]
+
+LANGUAGE_OPTIONS = [
+    selector.SelectOptionDict(value="en", label="English"),
+    selector.SelectOptionDict(value="it", label="Italiano"),
+    selector.SelectOptionDict(value="ja", label="Japanese"),
+]
+
+DATA_SCHEMA = vol.Schema({
+    vol.Required("account"): str,
+    vol.Required("password"): str,
+    vol.Optional("region", default="eu"): selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=REGION_OPTIONS,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    ),
+    vol.Optional("language", default="en"): selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=LANGUAGE_OPTIONS,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    ),
+})
 
 
-class LeproConfigFlow(ConfigFlow, domain=DOMAIN):
+class LeproPixelLedConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the initial account setup."""
 
     VERSION = 1
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            account = user_input[CONF_ACCOUNT]
+            account = user_input["account"]
             await self.async_set_unique_id(account.lower())
             self._abort_if_unique_id_configured()
 
-            # validate credentials by attempting login
-            api = LeproApi(
-                hass_config_dir=self.hass.config.config_dir,
-                entry_id="validate",
-                account=account,
-                password=user_input[CONF_PASSWORD],
-                region=user_input[CONF_REGION],
-            )
-            try:
-                await api.async_setup()
-            except LeproAuthError:
-                errors["base"] = "invalid_auth"
-            except Exception:  # noqa: BLE001
-                errors["base"] = "cannot_connect"
-            else:
-                return self.async_create_entry(
-                    title=account,
-                    data={
-                        CONF_ACCOUNT: account,
-                        CONF_PASSWORD: user_input[CONF_PASSWORD],
-                        CONF_REGION: user_input[CONF_REGION],
-                    },
-                )
+            # Create a mutable dictionary for the user input
+            data = dict(user_input)
+            
+            # Note: Persistent MAC generation and API validation are safely deferred 
+            # to async_setup_entry in light.py to prevent blocking the UI thread here.
+            return self.async_create_entry(title="Lepro Smart Lighting", data=data)
 
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_ACCOUNT): str,
-                vol.Required(CONF_PASSWORD): str,
-                vol.Required(CONF_REGION, default="eu"): vol.In(list(REGIONS.keys())),
-            }
-        )
         return self.async_show_form(
-            step_id="user", data_schema=schema, errors=errors
+            step_id="user", data_schema=DATA_SCHEMA, errors=errors
         )
 
     @staticmethod
     @callback
-    def async_get_options_flow(entry: ConfigEntry) -> OptionsFlow:
+    def async_get_options_flow(entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
         return LeproOptionsFlow(entry)
 
 
-class LeproOptionsFlow(OptionsFlow):
-    """Allow per-device pixel-count overrides.
+class LeproOptionsFlow(config_entries.OptionsFlow):
+    """Allow per-device pixel-count overrides for edge cases."""
 
-    Stored as options under CONF_PIXEL_COUNT: a dict of {did: count}. A value of
-    0 (or absent) means auto-detect.
-    """
-
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: config_entries.ConfigEntry) -> None:
         self.entry = entry
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:
-            # parse the single text field "did:count, did:count" into a dict
             overrides: dict[str, int] = {}
             raw = user_input.get("pixel_overrides", "").strip()
             if raw:

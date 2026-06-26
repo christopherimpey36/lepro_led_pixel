@@ -7,7 +7,8 @@
         "data": {
           "account": "Email",
           "password": "Password",
-          "region": "Region"
+          "region": "Region",
+          "language": "Language"
         }
       }
     },
@@ -23,7 +24,7 @@
     "step": {
       "init": {
         "title": "Pixel count overrides",
-        "description": "Optional. Force a pixel count for specific devices when auto-detect is wrong. Format: did:count, did:count (e.g. 1748632475:15). Leave blank for auto.",
+        "description": "Optional: Force a pixel count for specific devices if auto-detect fails. Format: did:count, did:count (e.g. 1234567890:15). Leave blank to trust the dynamic auto-detector.",
         "data": {
           "pixel_overrides": "Overrides"
         }
@@ -32,15 +33,16 @@
   },
   "entity": {
     "light": {
-      "string": {
-        "name": "String"
-      },
-      "pixel": {
-        "name": "Pixel {index}"
-      },
-      "bulb": {
-        "name": "Bulb"
-      }
+      "string": { "name": "String" },
+      "pixel": { "name": "Pixel {index}" },
+      "bulb": { "name": "Bulb" }
+    },
+    "number": {
+      "speed": { "name": "Effect Speed" },
+      "sensitivity": { "name": "Mic Sensitivity" }
+    },
+    "switch": {
+      "power": { "name": "Master Power" }
     }
   }
 }
