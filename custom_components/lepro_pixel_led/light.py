@@ -116,7 +116,8 @@ class MQTTClientWrapper:
             except asyncio.CancelledError:
                 pass
 
-async def async_login(session, account, password, mac, login_url, api_host, language="en"):
+async def async_login(session, account, password, mac, login_url, api_host, language="en", fcm_token=""):
+    """Perform login and return bearer token."""
     timestamp = str(int(time.time()))
     payload = {
         "platform": "2",
@@ -125,8 +126,7 @@ async def async_login(session, account, password, mac, login_url, api_host, lang
         "mac": mac,
         "timestamp": timestamp,
         "language": language,
-        # THIS was missing. Without it, Lepro silently returns 0 devices.
-        "fcmToken": "dfi8s76mRTCxRxm3UtNp2z:APA91bHWMEWKT9CgNfGJ961jot2qgfYdWePbO5sQLovSFDI7U_H-ulJiqIAB2dpZUUrhzUNWR3OE_eM83i9IDLk1a5ZRwHDxMA_TnGqdpE8H-0_JML8pBFA",
+        "fcmToken": fcm_token,
     }
     headers = {
         "Content-Type": "application/json",
@@ -142,13 +142,18 @@ async def async_login(session, account, password, mac, login_url, api_host, lang
         "Timestamp": timestamp,
         "User-Agent": "LE/1.0.9.202 (Custom Integration)",
     }
+
     async with session.post(login_url, json=payload, headers=headers) as resp:
         if resp.status != 200:
+            _LOGGER.error("Login failed with status %s", resp.status)
             return None
         data = await resp.json()
         if data.get("code") != 0:
+            _LOGGER.error("Login failed with message: %s", data.get("msg"))
             return None
-        return data.get("data", {}).get("token")
+        token = data.get("data", {}).get("token")
+        return token
+
 
 async def download_cert_file(session, url, path, headers):
     async with session.get(url, headers=headers) as resp:
