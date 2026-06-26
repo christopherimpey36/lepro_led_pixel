@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Lepro Pixel LED",
+        "description": "Sign in with your Lepro app account.",
+        "data": {
+          "account": "Email",
+          "password": "Password",
+          "region": "Region"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Could not connect to Lepro. Check your network and region."
+    },
+    "abort": {
+      "already_configured": "This Lepro account is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Pixel count overrides",
+        "description": "Optional. Force a pixel count for specific devices when auto-detect is wrong. Format: did:count, did:count (e.g. 1748632475:15). Leave blank for auto.",
+        "data": {
+          "pixel_overrides": "Overrides"
+        }
+      }
+    }
+  },
+  "entity": {
+    "light": {
+      "string": {
+        "name": "String"
+      },
+      "pixel": {
+        "name": "Pixel {index}"
+      },
+      "bulb": {
+        "name": "Bulb"
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "domain": "lepro_pixel_led",
+  "name": "Lepro Pixel LED",
+  "codeowners": ["@christopherimpey36"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/christopherimpey36/HACS/lepro_pixel_led",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/christopherimpey36/HACS/lepro_pixel_led/issues",
+  "loggers": ["custom_components.lepro_pixel_led"],
+  "requirements": ["aiohttp", "aiomqtt>=2.4.0"],
+  "version": "0.1.0"
+}

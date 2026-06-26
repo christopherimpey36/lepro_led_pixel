@@ -1,0 +1,52 @@
+set_pixels:
+  name: Set pixels
+  description: >
+    Set every pixel of an addressable Lepro string (ZB1/E1/N1) in a single
+    write. Provide one [r, g, b] colour per pixel, in order.
+  fields:
+    device_id:
+      name: Device ID
+      description: The Lepro device id (did) of the pixel string.
+      required: true
+      example: "1748632475"
+      selector:
+        text:
+    colors:
+      name: Colours
+      description: >
+        A list of [r, g, b] triples, one per pixel. Extra pixels keep their last
+        value; fewer than the string length leaves the remainder unchanged.
+      required: true
+      example: "[[255,0,0],[0,255,0],[0,0,255]]"
+      selector:
+        object:
+    brightness:
+      name: Brightness
+      description: Optional master brightness 0-255.
+      required: false
+      example: 200
+      selector:
+        number:
+          min: 0
+          max: 255
+
+send_debug_command:
+  name: Send debug command
+  description: >
+    Publish a raw payload to a device's prp/set topic. For protocol
+    investigation on unverified models. Advanced use only.
+  fields:
+    device_id:
+      name: Device ID
+      description: The Lepro device id (did).
+      required: true
+      example: "1748632475"
+      selector:
+        text:
+    payload:
+      name: Payload
+      description: The dict placed in the MQTT message's "d" field.
+      required: true
+      example: '{"d1": 1, "d2": 1, "d5": "000003E803E8"}'
+      selector:
+        object:
